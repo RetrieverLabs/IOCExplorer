@@ -162,23 +162,61 @@ if "extracted" in st.session_state:
     st.divider()
     st.subheader("2. Format for Hunt Query")
 
-    opt1, opt2, opt3 = st.columns([1, 1, 2])
-    with opt1:
+    # Formatting controls layout
+    col1, col2, col3 = st.columns(3)
+    with col1:
         wrap_quotes = st.toggle('Wrap in double quotes ("...")', value=True)
-    with opt2:
+    with col2:
+        asterisk_mode = st.selectbox(
+            "Wildcard Asterisks (*)",
+            options=[
+                "None (Normal)",
+                "Wrap inside quotes (*item*)",
+                "Wrap outside quotes (*item*)",
+                "Asterisk suffix only (item*)",
+                "Asterisk prefix only (*item)"
+            ],
+            index=0
+        )
+    with col3:
         separator_mode = st.radio(
             "Delimiter",
             options=["Comma (, )", "Boolean OR ( OR )"],
             horizontal=True
         )
-    with opt3:
-        wrap_parens = st.toggle("Wrap entire list in parentheses (...)", value=False)
 
-    # Deduplicate across categories (e.g., if a domain also appeared in a URL)
+    wrap_parens = st.toggle("Wrap entire list in parentheses (...)", value=False)
+
+    # Deduplicate across categories
     final_items = dedup_preserve_order(selected_all)
 
     if final_items:
-        formatted = [f'"{item}"' if wrap_quotes else item for item in final_items]
+        formatted = []
+        for item in final_items:
+            # Apply asterisk modifications
+            if asterisk_mode == "Wrap inside quotes (*item*)":
+                modified_item = f"*{item}*"
+            elif asterisk_mode == "Wrap outside quotes (*item*)":
+                # We handle outer asterisks after or during quote application
+                modified_item = item
+            elif asterisk_mode == "Asterisk suffix only (item*)":
+                modified_item = f"{item}*"
+            elif asterisk_mode == "Asterisk prefix only (*item)":
+                modified_item = f"*{item}"
+            else:
+                modified_item = item
+
+            # Apply quotes and outer asterisk positioning if needed
+            if wrap_quotes:
+                if asterisk_mode == "Wrap outside quotes (*item*)":
+                    item_str = f'*"{modified_item}"*'
+                else:
+                    item_str = f'"{modified_item}"'
+            else:
+                item_str = modified_item
+
+            formatted.append(item_str)
+
         sep = ", " if "Comma" in separator_mode else " OR "
         output_str = sep.join(formatted)
         if wrap_parens:
