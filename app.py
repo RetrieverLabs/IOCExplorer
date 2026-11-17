@@ -144,7 +144,7 @@ if st.button("Extract IOCs", type="primary"):
 
 if "extracted" in st.session_state:
     st.divider()
-    st.subheader("1. Review & Prune False Positives")
+    st.subheader("1. Review & Tune False Positives")
     data = st.session_state["extracted"]
 
     selected_all = []
@@ -162,65 +162,108 @@ if "extracted" in st.session_state:
     st.divider()
     st.subheader("2. Format for Hunt Query")
 
-    # Formatting controls layout
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        wrap_quotes = st.toggle('Wrap in double quotes ("...")', value=True)
-    with col2:
-        asterisk_mode = st.selectbox(
-            "Wildcard Asterisks (*)",
+    col_p1, col_p2 = st.columns([2, 1])
+    with col_p1:
+        preset = st.selectbox(
+            "Formatting Preset",
             options=[
-                "None (Normal)",
-                "Wrap inside quotes (*item*)",
-                "Wrap outside quotes (*item*)",
-                "Asterisk suffix only (item*)",
-                "Asterisk prefix only (*item)"
-            ],
-            index=0
+                "Custom (Manual Toggles)",
+                "CrowdStrike LogScale (Comma, Quotes)",
+                "spl_in_list (Comma, Quotes)",
+                "spl_or_chain (OR Chain, Quotes)",
+                "Regex Pipe Match (/.../i)"
+            ]
         )
-    with col3:
-        separator_mode = st.radio(
-            "Delimiter",
-            options=["Comma (, )", "Boolean OR ( OR )"],
-            horizontal=True
+    with col_p2:
+        wrap_parens = st.toggle("Wrap entire list in parentheses", value=False)
+
+    # Preset defaults
+    if preset == "CrowdStrike LogScale (Comma, Quotes)":
+        default_quotes, default_asterisk, default_delim = True, "None (Normal)", "Comma (, )"
+    elif preset == "spl_in_list (Comma, Quotes)":
+        default_quotes, default_asterisk, default_delim = True, "None (Normal)", "Comma (, )"
+    elif preset == "spl_or_chain (OR Chain, Quotes)":
+        default_quotes, default_asterisk, default_delim = True, "None (Normal)", "Boolean OR ( OR )"
+    elif preset == "Regex Pipe Match (/.../i)":
+        default_quotes, default_asterisk, default_delim = False, "None (Normal)", "Regex Pipe (|)"
+    else:
+        default_quotes, default_asterisk, default_delim = True, "None (Normal)", "Comma (, )"
+
+    # Extra input if Regex mode is chosen
+    field_prefix = ""
+    if preset == "Regex Pipe Match (/.../i)":
+        st.info("Regex mode automatically escapes special characters (like dots), joins items with `|`, and wraps them in `/.../i`.")
+        field_prefix = st.text_input(
+            "Optional Field Prefix (e.g., FileName= or RemoteIP4Address=)",
+            placeholder="FileName="
         )
 
-    wrap_parens = st.toggle("Wrap entire list in parentheses (...)", value=False)
+    # Manual controls if Custom is selected
+    if preset == "Custom (Manual Toggles)":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            wrap_quotes = st.toggle('Wrap in double quotes ("...")', value=True)
+        with col2:
+            asterisk_mode = st.selectbox(
+                "Wildcard Asterisks (*)",
+                options=[
+                    "None (Normal)",
+                    "Wrap inside quotes (*item*)",
+                    "Wrap outside quotes (*item*)",
+                    "Asterisk suffix only (item*)",
+                    "Asterisk prefix only (*item)"
+                ],
+                index=0
+            )
+        with col3:
+            separator_mode = st.radio(
+                "Delimiter",
+                options=["Comma (, )", "Boolean OR ( OR )"],
+                horizontal=True
+            )
+    else:
+        wrap_quotes = default_quotes
+        asterisk_mode = default_asterisk
+        separator_mode = default_delim
 
     # Deduplicate across categories
     final_items = dedup_preserve_order(selected_all)
 
     if final_items:
-        formatted = []
-        for item in final_items:
-            # Apply asterisk modifications
-            if asterisk_mode == "Wrap inside quotes (*item*)":
-                modified_item = f"*{item}*"
-            elif asterisk_mode == "Wrap outside quotes (*item*)":
-                # We handle outer asterisks after or during quote application
-                modified_item = item
-            elif asterisk_mode == "Asterisk suffix only (item*)":
-                modified_item = f"{item}*"
-            elif asterisk_mode == "Asterisk prefix only (*item)":
-                modified_item = f"*{item}"
-            else:
-                modified_item = item
-
-            # Apply quotes and outer asterisk positioning if needed
-            if wrap_quotes:
-                if asterisk_mode == "Wrap outside quotes (*item*)":
-                    item_str = f'*"{modified_item}"*'
+        if preset == "Regex Pipe Match (/.../i)":
+            # Automatically escape regex metacharacters (like periods) and join with |
+            escaped_items = [re.escape(item) for item in final_items]
+            joined_items = "|".join(escaped_items)
+            regex_body = f"/({joined_items})/i"
+            output_str = f"{field_prefix}{regex_body}" if field_prefix else regex_body
+            if wrap_parens:
+                output_str = f"({output_str})"
+        else:
+            formatted = []
+            for item in final_items:
+                if asterisk_mode == "Wrap inside quotes (*item*)":
+                    modified_item = f"*{item}*"
+                elif asterisk_mode == "Asterisk suffix only (item*)":
+                    modified_item = f"{item}*"
+                elif asterisk_mode == "Asterisk prefix only (*item)":
+                    modified_item = f"*{item}"
                 else:
-                    item_str = f'"{modified_item}"'
-            else:
-                item_str = modified_item
+                    modified_item = item
 
-            formatted.append(item_str)
+                if wrap_quotes:
+                    if asterisk_mode == "Wrap outside quotes (*item*)":
+                        item_str = f'*"{modified_item}"*'
+                    else:
+                        item_str = f'"{modified_item}"'
+                else:
+                    item_str = modified_item
 
-        sep = ", " if "Comma" in separator_mode else " OR "
-        output_str = sep.join(formatted)
-        if wrap_parens:
-            output_str = f"({output_str})"
+                formatted.append(item_str)
+
+            sep = ", " if "Comma" in separator_mode else " OR "
+            output_str = sep.join(formatted)
+            if wrap_parens:
+                output_str = f"({output_str})"
 
         st.caption(f"Total IOCs ready: **{len(final_items)}**")
         st.code(output_str, language="text")
