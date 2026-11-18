@@ -189,7 +189,6 @@ if "extracted" in st.session_state:
     else:
         default_quotes, default_asterisk, default_delim = True, "None (Normal)", "Comma (, )"
 
-    # Extra input if Regex mode is chosen
     field_prefix = ""
     if preset == "Regex Pipe Match (/.../i)":
         st.info("Regex mode automatically escapes special characters (like dots), joins items with `|`, and wraps them in `/.../i`.")
@@ -198,7 +197,6 @@ if "extracted" in st.session_state:
             placeholder="FileName="
         )
 
-    # Manual controls if Custom is selected
     if preset == "Custom (Manual Toggles)":
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -226,46 +224,78 @@ if "extracted" in st.session_state:
         asterisk_mode = default_asterisk
         separator_mode = default_delim
 
-    # Deduplicate across categories
-    final_items = dedup_preserve_order(selected_all)
+    # Gather selected items per category from session state
+    category_items = {}
+    total_selected_count = 0
+    for cat in data.keys():
+        picked = st.session_state.get(f"ms_{cat}", [])
+        if picked:
+            category_items[cat] = picked
+            total_selected_count += len(picked)
 
-    if final_items:
+    if total_selected_count > 0:
         if preset == "Regex Pipe Match (/.../i)":
-            # Automatically escape regex metacharacters (like periods) and join with |
-            escaped_items = [re.escape(item) for item in final_items]
+            # For regex, combine all selected items into one master regex block
+            all_picked_flat = [item for items in category_items.values() for item in items]
+            flat_deduped = dedup_preserve_order(all_picked_flat)
+            escaped_items = [re.escape(item) for item in flat_deduped]
             joined_items = "|".join(escaped_items)
             regex_body = f"/({joined_items})/i"
             output_str = f"{field_prefix}{regex_body}" if field_prefix else regex_body
             if wrap_parens:
                 output_str = f"({output_str})"
+
+            st.caption(f"Total IOCs ready: **{len(flat_deduped)}**")
+            st.code(output_str, language="text")
         else:
-            formatted = []
-            for item in final_items:
-                if asterisk_mode == "Wrap inside quotes (*item*)":
-                    modified_item = f"*{item}*"
-                elif asterisk_mode == "Asterisk suffix only (item*)":
-                    modified_item = f"{item}*"
-                elif asterisk_mode == "Asterisk prefix only (*item)":
-                    modified_item = f"*{item}"
-                else:
-                    modified_item = item
+            st.caption(f"Total IOCs ready across all categories: **{total_selected_count}**")
+            
+            # 1. Generate formatted strings per category
+            formatted_categories = {}
+            master_lines = []
 
-                if wrap_quotes:
-                    if asterisk_mode == "Wrap outside quotes (*item*)":
-                        item_str = f'*"{modified_item}"*'
+            for cat_name, items in category_items.items():
+                deduped_cat_items = dedup_preserve_order(items)
+                formatted = []
+                for item in deduped_cat_items:
+                    if asterisk_mode == "Wrap inside quotes (*item*)":
+                        modified_item = f"*{item}*"
+                    elif asterisk_mode == "Asterisk suffix only (item*)":
+                        modified_item = f"{item}*"
+                    elif asterisk_mode == "Asterisk prefix only (*item)":
+                        modified_item = f"*{item}"
                     else:
-                        item_str = f'"{modified_item}"'
-                else:
-                    item_str = modified_item
+                        modified_item = item
 
-                formatted.append(item_str)
+                    if wrap_quotes:
+                        if asterisk_mode == "Wrap outside quotes (*item*)":
+                            item_str = f'*"{modified_item}"*'
+                        else:
+                            item_str = f'"{modified_item}"'
+                    else:
+                        item_str = modified_item
 
-            sep = ", " if "Comma" in separator_mode else " OR "
-            output_str = sep.join(formatted)
-            if wrap_parens:
-                output_str = f"({output_str})"
+                    formatted.append(item_str)
 
-        st.caption(f"Total IOCs ready: **{len(final_items)}**")
-        st.code(output_str, language="text")
+                sep = ", " if "Comma" in separator_mode else " OR "
+                cat_output = sep.join(formatted)
+                if wrap_parens:
+                    cat_output = f"({cat_output})"
+
+                formatted_categories[cat_name] = (deduped_cat_items, cat_output)
+                master_lines.append(f"# {cat_name}\n{cat_output}")
+
+            # 2. Render Master "Copy All" Block at the top
+            master_output_str = "\n\n".join(master_lines)
+            st.subheader("📋 Master Output (Copy All)")
+            st.code(master_output_str, language="text")
+
+            st.divider()
+
+            # 3. Render individual category blocks below
+            st.subheader("📂 Individual Categories")
+            for cat_name, (deduped_cat_items, cat_output) in formatted_categories.items():
+                st.markdown(f"**{cat_name}** ({len(deduped_cat_items)})")
+                st.code(cat_output, language="text")
     else:
         st.info("No IOCs selected.")
